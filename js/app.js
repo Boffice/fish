@@ -16,6 +16,24 @@ const moonEl = el("moon");
 
 let forecast = null; // cached { lakesById, days }
 
+// Favorite lakes are kept in the browser only (localStorage) — per device,
+// no account needed.
+const FAV_KEY = "fish.favorites";
+
+function loadFavorites() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(FAV_KEY)) || []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveFavorites() {
+  localStorage.setItem(FAV_KEY, JSON.stringify([...favorites]));
+}
+
+let favorites = loadFavorites();
+
 function fmtHour(ts) {
   return new Date(ts).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 }
@@ -43,6 +61,7 @@ function populateControls() {
 
   lakeSel.innerHTML =
     `<option value="all">All lakes (ranked)</option>` +
+    `<option value="favorites">★ My favorite lakes</option>` +
     LAKES.map((l) => `<option value="${l.id}">${l.name} — ${l.region}</option>`).join("");
 }
 
@@ -110,6 +129,7 @@ function lakeCard(lake, evalResult, rank, speciesId) {
     ? `${fmtHour(windowStart.ts)}–${fmtHour(windowEnd.ts)}`
     : "—";
   const refHour = windowStart ?? scored[Math.floor(scored.length / 2)]?.h;
+  const isFav = favorites.has(lake.id);
 
   return `
     <article class="card" data-lake="${lake.id}">
@@ -123,6 +143,11 @@ function lakeCard(lake, evalResult, rank, speciesId) {
           <span class="score-num">${dayScore}</span>
           <span class="score-label">${rating.label}</span>
         </div>
+        <button class="fav-btn ${isFav ? "on" : ""}" data-fav="${lake.id}"
+                aria-label="${isFav ? "Remove from favorites" : "Add to favorites"}"
+                title="${isFav ? "Remove from favorites" : "Add to favorites"}">
+          ${isFav ? "★" : "☆"}
+        </button>
       </header>
       <div class="card-body">
         <p class="recommend">
@@ -159,15 +184,28 @@ function render() {
     return;
   }
 
-  const display = lakeId === "all" ? ranked : ranked.filter((x) => x.lake.id === lakeId);
+  let display;
+  if (lakeId === "all") display = ranked;
+  else if (lakeId === "favorites") display = ranked.filter((x) => favorites.has(x.lake.id));
+  else display = ranked.filter((x) => x.lake.id === lakeId);
 
   const targetTxt =
     speciesId === "any"
       ? "the best available fish"
       : SPECIES.find((s) => s.id === speciesId).name;
 
+  if (lakeId === "favorites" && display.length === 0) {
+    resultsEl.innerHTML =
+      `<p class="empty">No favorite lakes yet. Tap the ☆ on any lake to add it here.</p>`;
+    statusEl.textContent = `${fmtDay(dayKey)} — no favorite lakes saved yet.`;
+    return;
+  }
+
   if (lakeId === "all") {
     statusEl.textContent = `${fmtDay(dayKey)} — ${ranked.length} lakes ranked for ${targetTxt}.`;
+  } else if (lakeId === "favorites") {
+    statusEl.textContent =
+      `${fmtDay(dayKey)} — ${display.length} favorite lake${display.length === 1 ? "" : "s"} ranked for ${targetTxt}.`;
   } else {
     const x = display[0];
     statusEl.textContent =
@@ -183,6 +221,16 @@ function render() {
       const d = el(`detail-${btn.dataset.lake}`);
       d.hidden = !d.hidden;
       btn.textContent = d.hidden ? "Show hour-by-hour ▾" : "Hide hour-by-hour ▴";
+    });
+  });
+
+  resultsEl.querySelectorAll(".fav-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.fav;
+      if (favorites.has(id)) favorites.delete(id);
+      else favorites.add(id);
+      saveFavorites();
+      render();
     });
   });
 
