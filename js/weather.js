@@ -24,6 +24,7 @@ function buildUrl(lakes) {
       "wind_direction_10m",
       "cloud_cover",
       "precipitation",
+      "precipitation_probability",
       "is_day",
     ].join(","),
     daily: ["sunrise", "sunset"].join(","),
@@ -70,6 +71,9 @@ function normalise(block) {
       windDir: hrs.wind_direction_10m[i],
       cloud: hrs.cloud_cover[i],
       precip: hrs.precipitation[i],
+      // % chance of measurable rain in this hour; some Open-Meteo models
+      // return null, so callers should treat undefined as "unknown".
+      precipProb: hrs.precipitation_probability?.[i] ?? null,
       isDay: hrs.is_day[i] === 1,
       sunrise: s.sunrise,
       sunset: s.sunset,

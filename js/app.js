@@ -255,6 +255,28 @@ function lakeFacts(lake) {
   return parts.join(" · ");
 }
 
+// The app's recommended fishing spot for a given hour: the windward shore
+// when there's any wind, otherwise the lake centroid. Returned as [lat, lon]
+// so the same point feeds both the green map marker and the directions link
+// — they can't drift out of sync.
+function suggestedSpot(lake, refHour) {
+  const { lat, lon } = lakeCoord(lake);
+  if (!refHour || refHour.wind < 1 || refHour.windDir == null) {
+    return [lat, lon];
+  }
+  const toward = (refHour.windDir + 180) % 360;
+  const shape = lakeShape(lake);
+  const onShore = shape && shorePoint(shape, lat, lon, toward);
+  return onShore || offsetCoord(lat, lon, toward, 2.2);
+}
+
+// Google Maps directions URL — driving mode, user's current location as the
+// origin. Works as both a web link and a deep link to the Google Maps app on
+// iOS/Android.
+function directionsUrl(lat, lon) {
+  return `https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=${lat},${lon}`;
+}
+
 // Leaflet maps are created lazily (once a card's detail panel is opened) and
 // tracked so they can be torn down whenever the card list is re-rendered.
 let mapInstances = {};
@@ -290,12 +312,14 @@ function initLakeMap(lake, refHour) {
   // so the popup softens to "likely" and points at structure as well. Without
   // this, calm-day lakes (Tsalka, Shaori) showed only the centroid pin.
   if (refHour && refHour.wind >= 1) {
-    const toward = (refHour.windDir + 180) % 360;
-    const spot =
-      (shape && shorePoint(shape, lat, lon, toward)) ||
-      offsetCoord(lat, lon, toward, 2.2);
+    const spot = suggestedSpot(lake, refHour);
     L.polyline([[lat, lon], spot], { color: "#2ec4b6", weight: 3 }).addTo(map);
     const strongWind = refHour.wind >= 3;
+    const dirHref = directionsUrl(spot[0], spot[1]);
+    const popupTitle = strongWind ? "Suggested spot" : "Likely spot";
+    const popupBody = strongWind
+      ? "Wind pushes baitfish to this shore."
+      : "Wind is light — only a mild push this way. Also work nearby points, inflows and shaded cover.";
     L.circleMarker(spot, {
       radius: 9,
       color: "#2ec4b6",
@@ -304,14 +328,40 @@ function initLakeMap(lake, refHour) {
     })
       .addTo(map)
       .bindPopup(
-        strongWind
-          ? "<b>Suggested spot</b><br><small>Wind pushes baitfish to this shore.</small>"
-          : "<b>Likely spot</b><br><small>Wind is light — only a mild push this way. Also work nearby points, inflows and shaded cover.</small>",
+        `<b>${popupTitle}</b><br><small>${popupBody}</small><br>` +
+          `<a href="${dirHref}" target="_blank" rel="noopener noreferrer">🧭 Directions in Google Maps</a>`,
       );
   }
 
   mapInstances[id] = map;
   setTimeout(() => map.invalidateSize(), 60); // container was hidden until now
+}
+
+// Day-level rain picture, so users see the day as a whole (the on-card hour
+// is only the recommended window — it could be dry while the rest of the day
+// pours). Returns null when there's effectively no rain expected anywhere
+// during the day, so the card stays clean on truly dry days.
+function precipSummary(scored) {
+  let totalMm = 0;
+  let peakMm = 0;
+  let rainyHours = 0;
+  let peakProb = 0;
+  for (const { h } of scored) {
+    if (h.precip > 0) totalMm += h.precip;
+    if (h.precip > peakMm) peakMm = h.precip;
+    if (h.precip >= 0.2) rainyHours += 1;
+    if (h.precipProb != null && h.precipProb > peakProb) peakProb = h.precipProb;
+  }
+  if (totalMm < 0.5 && peakProb < 30) return null;
+  return { totalMm, peakMm, rainyHours, peakProb };
+}
+
+// Two-line classifier for the day-rain banner — feeds icon + tone choice.
+function precipBand(totalMm) {
+  if (totalMm >= 12) return { label: "Heavy rain", cls: "rain-heavy", icon: "⛈️" };
+  if (totalMm >= 3) return { label: "Moderate rain", cls: "rain-moderate", icon: "🌧️" };
+  if (totalMm >= 0.5) return { label: "Light rain", cls: "rain-light", icon: "🌦️" };
+  return { label: "Showers possible", cls: "rain-light", icon: "🌦️" };
 }
 
 function weatherSummary(h, lake) {
@@ -330,6 +380,8 @@ function weatherSummary(h, lake) {
   const waterPart = showWater
     ? ` <span class="norm" title="Shallow water proxy used for scoring">/ water ~${Math.round(water)}°</span>`
     : "";
+  const probPart =
+    h.precipProb != null ? ` <span class="norm">(${Math.round(h.precipProb)}% chance)</span>` : "";
   return `
     <div class="wx">
       <span title="Air temperature vs seasonal normal">🌡️ ${Math.round(h.temp)}°C${tempNorm}${waterPart}</span>
@@ -338,8 +390,21 @@ function weatherSummary(h, lake) {
       </span>
       <span title="Wind">💨 ${Math.round(h.wind)} km/h ${compass(h.windDir)}</span>
       <span title="Cloud cover">☁️ ${Math.round(h.cloud)}%</span>
-      <span title="Precipitation">🌧️ ${h.precip.toFixed(1)} mm</span>
+      <span title="Precipitation in the recommended window">🌧️ ${h.precip.toFixed(1)} mm${probPart}</span>
     </div>`;
+}
+
+function rainBanner(summary) {
+  if (!summary) return "";
+  const { totalMm, peakMm, rainyHours, peakProb } = summary;
+  const band = precipBand(totalMm);
+  const bits = [];
+  if (totalMm >= 0.5) {
+    bits.push(`${totalMm.toFixed(1)} mm across ${rainyHours} h`);
+  }
+  if (peakMm >= 1) bits.push(`peak ${peakMm.toFixed(1)} mm/h`);
+  if (peakProb > 0) bits.push(`max ${Math.round(peakProb)}% chance`);
+  return `<p class="rain-banner ${band.cls}">${band.icon} <strong>${band.label} today:</strong> ${bits.join(" · ")}</p>`;
 }
 
 function hourlyBars(scored, windowStart, windowEnd) {
@@ -368,6 +433,9 @@ function lakeCard(lake, evalResult, rank, speciesId) {
   const refHour = windowStart ?? scored[Math.floor(scored.length / 2)]?.h;
   const isFav = favorites.has(lake.id);
   const spot = refHour ? spotAdvice(refHour) : null;
+  const [spotLat, spotLon] = suggestedSpot(lake, refHour);
+  const dirHref = directionsUrl(spotLat, spotLon);
+  const rain = precipSummary(scored);
 
   return `
     <article class="card" data-lake="${lake.id}">
@@ -393,6 +461,7 @@ function lakeCard(lake, evalResult, rank, speciesId) {
           ${speciesId === "any" ? `&nbsp;·&nbsp; <strong>Target:</strong> ${species.name}` : ""}
         </p>
         ${absent ? `<p class="absent-warn">⚠️ ${species.name} isn't known to inhabit ${lake.name} — the weather score still shows, but expect few or no fish.</p>` : ""}
+        ${rainBanner(rain)}
         ${refHour ? weatherSummary(refHour, lake) : ""}
         <p class="lake-facts">${lakeFacts(lake)}</p>
         ${
@@ -401,6 +470,12 @@ function lakeCard(lake, evalResult, rank, speciesId) {
                <p class="spot-why">${spot.why}</p>`
             : ""
         }
+        <p class="directions">
+          <a class="directions-btn" href="${dirHref}" target="_blank" rel="noopener noreferrer"
+             title="Open Google Maps with driving directions to the suggested spot">
+            🧭 Directions to the spot
+          </a>
+        </p>
         <p class="species-note">${species.note}</p>
         <button class="toggle" data-lake="${lake.id}">Show map &amp; hours ▾</button>
         <div class="detail" id="detail-${lake.id}" hidden>
