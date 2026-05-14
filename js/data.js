@@ -45,7 +45,7 @@ export const SPECIES = [
     note: "Warm-water bottom feeder. Best on stable high pressure, warm summer mornings and nights.",
   },
   {
-    id: "crucian", name: "Crucian Carp", geo: "კარჩხანა",
+    id: "crucian", name: "Crucian Carp", geo: "კარჭხანა",
     tempOpt: [16, 26], cloudPref: "mid", pressW: 0.4, night: 0.45,
     season: [0.3, 0.3, 0.5, 0.75, 0.95, 1.0, 0.95, 0.95, 0.85, 0.6, 0.4, 0.3],
     note: "Hardy and tolerant. Forgiving of weather swings; calm warm days are still best.",
