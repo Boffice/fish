@@ -4,7 +4,7 @@
 // uncached lakes are looked up sequentially in the background.
 
 const NOMINATIM = "https://nominatim.openstreetmap.org/search";
-const GEO_KEY = "fish.geo.v2";
+const GEO_KEY = "fish.geo.v3";
 
 export function loadGeoCache() {
   try {
@@ -22,11 +22,11 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function geocodeOne(lake) {
   // polygon_geojson returns the full lake outline (simplified a little by
-  // polygon_threshold) so the app can reason about the whole water body.
+  // polygon_threshold); extratags carries any OSM depth tag if one exists.
   const url =
     `${NOMINATIM}?q=${encodeURIComponent(lake.search)}` +
     `&countrycodes=ge&format=jsonv2&limit=1` +
-    `&polygon_geojson=1&polygon_threshold=0.0008`;
+    `&polygon_geojson=1&polygon_threshold=0.0008&extratags=1`;
   const res = await fetch(url, { headers: { "Accept-Language": "en" } });
   if (!res.ok) throw new Error(`Nominatim ${res.status}`);
   const data = await res.json();
@@ -36,6 +36,9 @@ async function geocodeOne(lake) {
   if (r.geojson && (r.geojson.type === "Polygon" || r.geojson.type === "MultiPolygon")) {
     out.shape = r.geojson;
   }
+  const tags = r.extratags || {};
+  const depth = tags.max_depth || tags.depth;
+  if (depth) out.depth = String(depth);
   return out;
 }
 
