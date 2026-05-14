@@ -23,10 +23,12 @@ export function moonLabel(phase) {
   return names[Math.round(phase * 8) % 8];
 }
 
-// Fish feed harder around the new and full moon. Map phase -> 0.85..1.1.
+// Fish feed harder around the new and full moon. Range 0.75..1.0: a good moon
+// never inflates the score past the ceiling (which used to peg almost every
+// day at 100 in peak season), the quarters pull it down.
 function moonFactor(phase) {
   const closeness = Math.cos(phase * 2 * Math.PI * 2); // peaks at new & full
-  return 0.97 + 0.13 * Math.max(0, closeness) - 0.06 * Math.max(0, -closeness);
+  return 0.85 + 0.15 * Math.max(0, closeness) - 0.10 * Math.max(0, -closeness);
 }
 
 // Gaussian-ish bump: 1 at centre, falling to ~0 a few halfWidths away.
@@ -42,9 +44,9 @@ function band(value, lo, hi, ramp) {
   return Math.max(0, 1 - (value - hi) / ramp);
 }
 
-function tempScore(airTemp, species) {
+function tempScore(waterTemp, species) {
   const [lo, hi] = species.tempOpt;
-  return band(airTemp, lo, hi, 9);
+  return band(waterTemp, lo, hi, 9);
 }
 
 // Absolute barometric pressure (hPa at sea level). Fish are most comfortable
@@ -55,13 +57,11 @@ function pressureLevelScore(p) {
 
 // Pressure trend over the previous 3 hours is the single strongest signal.
 // A slow, steady fall ahead of a front triggers feeding; sharp moves and
-// post-front rises kill it.
+// post-front rises kill it. Modelled as a smooth bell centred at -2 hPa/3h
+// (the classic pre-front feed) so small input changes don't flip score bins.
 function pressureTrendScore(delta3h) {
-  if (delta3h <= -6) return 0.30; // storm crashing in
-  if (delta3h <= -1.2) return 1.00; // classic pre-front feed
-  if (delta3h < 1.2) return 0.80; // stable
-  if (delta3h < 4) return 0.50; // building high
-  return 0.30; // sharp post-front rise
+  const z = (delta3h + 2) / 3.0;
+  return 0.30 + 0.70 * Math.exp(-z * z);
 }
 
 // Light breeze oxygenates and hides the angler; dead calm and gales do not.
@@ -85,12 +85,15 @@ function precipScore(mm) {
 
 // Low-light windows (around sunrise / sunset) are prime. Night value depends
 // on the species; bright midday is the weakest slot for most fish.
+// Twilight bonus capped at +0.35 (was +0.55) so dawn/dusk hours don't
+// auto-saturate the score — they were pegging light at 1.0 every single day,
+// which fed straight into the headline inflation.
 function lightScore(hourTs, sunrise, sunset, isDay, species) {
   const hrsFromSunrise = Math.abs(hourTs - sunrise) / 3600000;
   const hrsFromSunset = Math.abs(hourTs - sunset) / 3600000;
   const twilight = Math.max(bell(hrsFromSunrise, 0, 1.6), bell(hrsFromSunset, 0, 1.6));
   const base = isDay ? 0.55 : 0.30 + 0.55 * species.night;
-  return Math.min(1, base + 0.55 * twilight);
+  return Math.min(1, base + 0.35 * twilight);
 }
 
 const WEIGHTS = {
@@ -103,10 +106,25 @@ const WEIGHTS = {
   light: 0.20,
 };
 
-// Score a single hour for one species. `h` is a normalised hour record.
-export function scoreHour(h, species) {
+// Per-1000m-above-500m, biological "spring" arrives roughly one month later
+// at altitude. We shift the species season curve backwards by this many
+// months for high lakes so May at Tabatskuri (1991 m) reads more like late
+// March/April at sea level. Linear interpolation between adjacent months
+// keeps the curve continuous.
+function seasonalMultiplier(species, month, elevation) {
+  const shift = elevation > 500 ? (elevation - 500) / 1000 : 0;
+  const effective = month - shift;
+  const m0 = ((Math.floor(effective) % 12) + 12) % 12;
+  const m1 = (m0 + 1) % 12;
+  const f = effective - Math.floor(effective);
+  return species.season[m0] * (1 - f) + species.season[m1] * f;
+}
+
+// Score a single hour for one species. `h` is a normalised hour record;
+// `lake` is needed for the elevation-shifted season curve.
+export function scoreHour(h, species, lake) {
   const parts = {
-    temp: tempScore(h.temp, species),
+    temp: tempScore(h.waterTemp ?? h.temp, species),
     pressureLevel: pressureLevelScore(h.pressure),
     pressureTrend: pressureTrendScore(h.pressureTrend),
     wind: windScore(h.wind),
@@ -127,14 +145,17 @@ export function scoreHour(h, species) {
   }
   const blended = total / wsum;
 
-  // The weighted sub-scores realistically sit in a narrow ~0.4-0.9 band, so
-  // raw blended values barely differ between days. Stretch that band across
-  // the full range so the final score actually discriminates good from bad
-  // instead of saturating everything near "prime".
-  const contrasted = Math.max(0, Math.min(1, (blended - 0.4) / 0.5));
+  // The weighted sub-scores realistically sit in a ~0.55-1.0 band — the light,
+  // wind and precip terms keep the floor up, so blended rarely drops below
+  // ~0.5. Stretching that band across [0,1] keeps mediocre days off "prime"
+  // and reserves a true 100 for hours where every sub-score lands at the top.
+  // Upper clamp removed: let season/moon multipliers still discriminate
+  // between near-perfect hours instead of squashing them all to 1.0.
+  const contrasted = Math.max(0, (blended - 0.55) / 0.45);
 
   const month = new Date(h.ts).getMonth();
-  const seasonMul = species.season[month];
+  const elevation = lake?.elevation ?? 0;
+  const seasonMul = seasonalMultiplier(species, month, elevation);
   const moonMul = moonFactor(moonPhase(new Date(h.ts)));
 
   const score = Math.round(Math.max(0, Math.min(1, contrasted * seasonMul * moonMul)) * 100);
@@ -142,17 +163,24 @@ export function scoreHour(h, species) {
 }
 
 // Given the hours belonging to one calendar day, find the best 3-hour window.
-export function bestWindow(dayHours, species) {
-  const scored = dayHours.map((h) => ({ h, ...scoreHour(h, species) }));
+export function bestWindow(dayHours, species, lake) {
+  const scored = dayHours.map((h) => ({ h, ...scoreHour(h, species, lake) }));
   let best = { avg: -1, start: 0 };
   for (let i = 0; i + 2 < scored.length; i++) {
     const avg = (scored[i].score + scored[i + 1].score + scored[i + 2].score) / 3;
     if (avg > best.avg) best = { avg, start: i };
   }
   const dayAvg = scored.reduce((s, x) => s + x.score, 0) / (scored.length || 1);
+  const peak = best.avg < 0 ? dayAvg : best.avg;
+  // Headline = mostly the best 3-h window, partly the day-as-a-whole. Without
+  // the blend, any day with one decent dawn hour scored "Prime" — the window
+  // bias used to drown out the question of whether the rest of the day was
+  // any good at all.
+  const blended = 0.65 * peak + 0.35 * dayAvg;
   return {
     scored,
-    dayScore: Math.round(best.avg < 0 ? dayAvg : best.avg),
+    dayScore: Math.round(blended),
+    dayPeak: Math.round(peak),
     dayAvg: Math.round(dayAvg),
     windowStart: scored[best.start]?.h ?? null,
     windowEnd: scored[best.start + 2]?.h ?? null,

@@ -14,6 +14,11 @@ function buildUrl(lakes) {
     longitude: lon,
     hourly: [
       "temperature_2m",
+      // Soil temperature at ~18 cm is the closest free proxy for shallow
+      // lake-water temperature — it lags air temp by days, the way water
+      // does. Used by the species temp comfort score; air temp is kept for
+      // the on-card weather summary.
+      "soil_temperature_18cm",
       "pressure_msl",
       "wind_speed_10m",
       "wind_direction_10m",
@@ -49,11 +54,16 @@ function normalise(block) {
     const dayKey = iso.slice(0, 10);
     const s = sun[dayKey] || { sunrise: ts, sunset: ts };
     const prevPressure = i >= 3 ? hrs.pressure_msl[i - 3] : hrs.pressure_msl[i];
+    const air = hrs.temperature_2m[i];
+    const soil = hrs.soil_temperature_18cm?.[i];
     return {
       ts,
       iso,
       dayKey,
-      temp: hrs.temperature_2m[i],
+      temp: air,
+      // Lake-water proxy for scoring. Falls back to air temp if Open-Meteo
+      // returns null for soil temp at this location/hour.
+      waterTemp: soil ?? air,
       pressure: hrs.pressure_msl[i],
       pressureTrend: hrs.pressure_msl[i] - prevPressure,
       wind: hrs.wind_speed_10m[i],

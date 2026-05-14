@@ -80,23 +80,35 @@ species-specific weights:
 
 | Sub-score      | Weight | Idea |
 |----------------|--------|------|
-| pressure trend | 0.22   | a slow 3 h fall before a front = feeding; sharp moves / post-front rises kill it. **Strongest signal.** |
-| light          | 0.20   | dawn/dusk twilight windows are prime; night value is species-dependent |
-| temperature    | 0.16   | air temp as a proxy for water temp vs the species' comfort band |
+| pressure trend | 0.22   | continuous bell centred at −2 hPa/3 h (the classic pre-front feed). **Strongest signal.** |
+| light          | 0.20   | dawn/dusk twilight windows are prime; night value is species-dependent. Twilight bonus capped at +0.35 so dawn doesn't auto-saturate. |
+| temperature    | 0.16   | **water temperature** (from Open-Meteo soil temp at 18 cm) vs the species' comfort band — far better at altitude than air temp |
 | pressure level | 0.13   | absolute hPa; ~1012–1022 is the comfortable band |
 | wind           | 0.12   | a light breeze (6–19 km/h) is best; dead calm and gales are not |
 | cloud          | 0.09   | predators favour overcast; generalists like mid cover |
 | precip         | 0.08   | light rain can help; heavy rain hurts |
 
 - Pressure-sensitive species lean the two pressure weights up via `species.pressW`.
-- The blended 0–1 value is then **contrast-stretched** `(blended-0.4)/0.5` — the
-  raw weighted average realistically only spans ~0.4–0.9, so without this every
-  day scored 85–100 and ratings were meaningless.
-- Finally multiplied by `seasonMul` (per-species monthly activity) and `moonMul`
-  (feeding peaks near new/full moon), clamped, ×100.
+- The blended 0–1 value is then **contrast-stretched** `(blended-0.55)/0.45` —
+  the raw weighted average realistically only spans ~0.55–1.0 (light/wind/precip
+  keep the floor up), so without this every day scored 85–100 and ratings were
+  meaningless.
+- Finally multiplied by `seasonMul` and `moonMul`, clamped, ×100.
+  - **`seasonMul`** is the species' monthly activity curve, **shifted backwards
+    by ~1 month per 1000 m above 500 m**. May at Tabatskuri (1991 m) reads more
+    like late March/April at sea level — alpine biology lags lowland by weeks.
+  - **`moonMul`** is the new/full-moon feeding bonus, range **0.75–1.0** — capped
+    at 1 so a good moon can't lift an already-near-perfect score past the ceiling.
 
 `bestWindow()` scores all of a day's hours and returns the best contiguous
-**3-hour window** — that's the day's headline score and the recommended time.
+**3-hour window** as the recommended time, but the day's headline `dayScore` is
+**0.65 × peak window + 0.35 × 24-hour average** so a day with one freak dawn
+hour doesn't beat a day with sustained good conditions.
+
+**Per-lake species presence** (`species.lakes`) filters "Any fish" mode so a
+species is only considered at lakes where it's actually found — no more catfish
+recommendations at 2000 m, no more trout in warm lowland reservoirs. When a
+user explicitly picks a species not native to a lake, the card flags it.
 
 `spotAdvice()` turns wind + pressure + cloud into where-on-the-lake text
 (windward shore + depth zone). On the map, `shorePoint()` walks from the lake
@@ -130,7 +142,7 @@ centre along the windward bearing across the real polygon to put the green
 ## Browser storage (localStorage)
 
 - `fish.favorites` — array of favourited lake ids.
-- `fish.geo.v4` — `{ lakeId: { lat, lon, shape?, depth? } }` geocode cache.
+- `fish.geo.v6` — `{ lakeId: { lat, lon, shape?, depth? } }` geocode cache.
   **Bump the `vN` suffix** in `geocode.js` whenever the cached shape changes —
   it forces a clean re-geocode.
 
@@ -138,12 +150,12 @@ centre along the windward bearing across the real polygon to put the green
 
 ## Known issues & pending work
 
-- **"Any fish" week strip saturates.** It shows the single best species across
-  all lakes, so it trends high. Picking a specific fish discriminates properly.
-  Open option: switch "Any fish" aggregation from max → average.
 - **Lake depth is sparse.** No free bathymetry API exists; only shown when OSM
   happens to have a `depth`/`max_depth` tag. Real figures could be added
   per-lake in `data.js` if the user supplies them.
+- **No bathymetry-aware spot.** The map's green marker is just the windward
+  shore. Real "where on the lake" wants drop-offs, weed beds and inflows —
+  data not in OSM. Fallback plan: hand-marked points-of-interest per lake.
 - **Geocoding can still miss a lake** if no good OSM match exists. `geocodeOne()`
   already prefers water bodies over same-named villages (this fixed Jandari).
   If a lake has no polygon, the app falls back to the `data.js` centroid and

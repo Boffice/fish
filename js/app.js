@@ -101,16 +101,25 @@ function populateDates() {
     .join("");
 }
 
+// True if this species has a `lakes` whitelist and this lake isn't on it —
+// in that case "Any fish" mode skips the combo entirely.
+function speciesAtLake(species, lakeId) {
+  return !species.lakes || species.lakes.includes(lakeId);
+}
+
 // Pick the result for a lake+day: either the chosen species, or whichever
-// species scores best when "any" is selected.
+// species scores best when "any" is selected. "Any" only considers species
+// the lake actually holds — no more catfish recommendations at 2000 m.
 function evaluate(lakeId, dayKey, speciesId) {
   const dayHours = forecast.lakesById[lakeId]?.hoursByDay[dayKey];
   if (!dayHours || dayHours.length === 0) return null;
+  const lake = LAKES.find((l) => l.id === lakeId);
 
   if (speciesId === "any") {
     let best = null;
     for (const sp of SPECIES) {
-      const w = bestWindow(dayHours, sp);
+      if (!speciesAtLake(sp, lakeId)) continue;
+      const w = bestWindow(dayHours, sp, lake);
       if (!best || w.dayScore > best.result.dayScore) {
         best = { species: sp, result: w };
       }
@@ -118,7 +127,8 @@ function evaluate(lakeId, dayKey, speciesId) {
     return best;
   }
   const sp = SPECIES.find((s) => s.id === speciesId);
-  return { species: sp, result: bestWindow(dayHours, sp) };
+  const result = bestWindow(dayHours, sp, lake);
+  return { species: sp, result, absent: !speciesAtLake(sp, lakeId) };
 }
 
 // Which lakes the current filter is looking at.
@@ -276,12 +286,16 @@ function initLakeMap(lake, refHour) {
   // The green marker is the app's suggestion: the windward shore, where wind
   // and surface drift stack baitfish and the predators that follow them. With
   // a real outline it sits on the actual shoreline; otherwise it's an offset.
-  if (refHour && refHour.wind >= 3) {
+  // Any non-zero wind still has a direction — at 1-3 km/h the push is slight,
+  // so the popup softens to "likely" and points at structure as well. Without
+  // this, calm-day lakes (Tsalka, Shaori) showed only the centroid pin.
+  if (refHour && refHour.wind >= 1) {
     const toward = (refHour.windDir + 180) % 360;
     const spot =
       (shape && shorePoint(shape, lat, lon, toward)) ||
       offsetCoord(lat, lon, toward, 2.2);
     L.polyline([[lat, lon], spot], { color: "#2ec4b6", weight: 3 }).addTo(map);
+    const strongWind = refHour.wind >= 3;
     L.circleMarker(spot, {
       radius: 9,
       color: "#2ec4b6",
@@ -289,7 +303,11 @@ function initLakeMap(lake, refHour) {
       fillOpacity: 0.8,
     })
       .addTo(map)
-      .bindPopup("<b>Suggested spot</b><br><small>Wind pushes baitfish to this shore.</small>");
+      .bindPopup(
+        strongWind
+          ? "<b>Suggested spot</b><br><small>Wind pushes baitfish to this shore.</small>"
+          : "<b>Likely spot</b><br><small>Wind is light — only a mild push this way. Also work nearby points, inflows and shaded cover.</small>",
+      );
   }
 
   mapInstances[id] = map;
@@ -304,9 +322,17 @@ function weatherSummary(h, lake) {
     n?.temp?.[month] != null
       ? ` <span class="norm">(norm ${Math.round(n.temp[month])}°)</span>`
       : "";
+  // Show the water proxy when it's meaningfully different from air temp — the
+  // gap is what matters at altitude (alpine air can be 12°C while soil/water
+  // sits at 4°C, which is why scoring uses water, not air).
+  const water = h.waterTemp;
+  const showWater = water != null && Math.abs(water - h.temp) >= 2;
+  const waterPart = showWater
+    ? ` <span class="norm" title="Shallow water proxy used for scoring">/ water ~${Math.round(water)}°</span>`
+    : "";
   return `
     <div class="wx">
-      <span title="Air temperature vs seasonal normal">🌡️ ${Math.round(h.temp)}°C${tempNorm}</span>
+      <span title="Air temperature vs seasonal normal">🌡️ ${Math.round(h.temp)}°C${tempNorm}${waterPart}</span>
       <span title="Sea-level pressure & 3h trend" class="${t.cls}">
         🌀 ${Math.round(h.pressure)} hPa ${t.arrow}
       </span>
@@ -333,7 +359,7 @@ function hourlyBars(scored, windowStart, windowEnd) {
 }
 
 function lakeCard(lake, evalResult, rank, speciesId) {
-  const { species, result } = evalResult;
+  const { species, result, absent } = evalResult;
   const { dayScore, windowStart, windowEnd, scored } = result;
   const rating = ratingLabel(dayScore);
   const windowTxt = windowStart
@@ -366,6 +392,7 @@ function lakeCard(lake, evalResult, rank, speciesId) {
           <strong>Best window:</strong> ${windowTxt}
           ${speciesId === "any" ? `&nbsp;·&nbsp; <strong>Target:</strong> ${species.name}` : ""}
         </p>
+        ${absent ? `<p class="absent-warn">⚠️ ${species.name} isn't known to inhabit ${lake.name} — the weather score still shows, but expect few or no fish.</p>` : ""}
         ${refHour ? weatherSummary(refHour, lake) : ""}
         <p class="lake-facts">${lakeFacts(lake)}</p>
         ${

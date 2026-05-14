@@ -4,7 +4,11 @@
 // uncached lakes are looked up sequentially in the background.
 
 const NOMINATIM = "https://nominatim.openstreetmap.org/search";
-const GEO_KEY = "fish.geo.v4";
+// Bumped to v6: Jandari Lake's polygon lives on the Azerbaijani side of the
+// border in OSM, so the ge-only country filter could never reach it and v5
+// still cached the Georgian village by the same name. v6 forces a fresh
+// lookup with the new per-lake country override + polygon-first preference.
+const GEO_KEY = "fish.geo.v6";
 
 export function loadGeoCache() {
   try {
@@ -39,16 +43,21 @@ function isWaterBody(r) {
 async function geocodeOne(lake) {
   // polygon_geojson returns the full lake outline (simplified a little by
   // polygon_threshold); extratags carries any OSM depth tag if one exists.
-  // limit=5 + isWaterBody picks the lake even when a village shares its name.
+  // limit=5 + the polygon/water preference picks the lake even when a village
+  // shares its name. `countries` is per-lake so transboundary lakes (Jandari)
+  // can include their neighbour's country code.
+  const countries = lake.countries || "ge";
   const url =
     `${NOMINATIM}?q=${encodeURIComponent(lake.search)}` +
-    `&countrycodes=ge&format=jsonv2&limit=5` +
+    `&countrycodes=${encodeURIComponent(countries)}&format=jsonv2&limit=5` +
     `&polygon_geojson=1&polygon_threshold=0.0008&extratags=1`;
   const res = await fetch(url, { headers: { "Accept-Language": "en" } });
   if (!res.ok) throw new Error(`Nominatim ${res.status}`);
   const data = await res.json();
   if (!data.length) return null;
-  const r = data.find(isWaterBody) || data[0];
+  // Prefer a result that actually carries a lake outline — that's almost
+  // always the lake itself rather than a same-named village or hamlet.
+  const r = data.find(hasPolygon) || data.find(isWaterBody) || data[0];
   const out = { lat: Number(r.lat), lon: Number(r.lon) };
   if (hasPolygon(r)) out.shape = r.geojson;
   const tags = r.extratags || {};
