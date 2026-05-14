@@ -2,7 +2,7 @@
 // the ranked lake list plus an hourly detail view.
 
 import { LAKES, SPECIES } from "./data.js";
-import { fetchForecast } from "./weather.js";
+import { fetchForecast, fetchNormals } from "./weather.js";
 import { bestWindow, ratingLabel, moonPhase, moonLabel, spotAdvice } from "./scoring.js";
 
 const el = (id) => document.getElementById(id);
@@ -16,6 +16,7 @@ const weekEl = el("week");
 const moonEl = el("moon");
 
 let forecast = null; // cached { lakesById, days }
+let normals = null; // cached per-lake monthly climate normals (best-effort)
 
 // Favorite lakes are kept in the browser only (localStorage) — per device,
 // no account needed.
@@ -166,15 +167,25 @@ function initLakeMap(lake, refHour) {
   setTimeout(() => map.invalidateSize(), 60); // container was hidden until now
 }
 
-function weatherSummary(h) {
+function weatherSummary(h, lake) {
   const t = trendArrow(h.pressureTrend);
+  const n = normals?.[lake.id];
+  const month = new Date(h.ts).getMonth();
+  const tempNorm =
+    n?.temp?.[month] != null
+      ? ` <span class="norm">(norm ${Math.round(n.temp[month])}°)</span>`
+      : "";
+  const windNorm =
+    n?.wind?.[month] != null
+      ? ` <span class="norm">(norm ${Math.round(n.wind[month])})</span>`
+      : "";
   return `
     <div class="wx">
-      <span title="Air temperature">🌡️ ${Math.round(h.temp)}°C</span>
+      <span title="Air temperature vs seasonal normal">🌡️ ${Math.round(h.temp)}°C${tempNorm}</span>
       <span title="Sea-level pressure & 3h trend" class="${t.cls}">
         🌀 ${Math.round(h.pressure)} hPa ${t.arrow}
       </span>
-      <span title="Wind">💨 ${Math.round(h.wind)} km/h ${compass(h.windDir)}</span>
+      <span title="Wind vs seasonal normal">💨 ${Math.round(h.wind)} km/h ${compass(h.windDir)}${windNorm}</span>
       <span title="Cloud cover">☁️ ${Math.round(h.cloud)}%</span>
       <span title="Precipitation">🌧️ ${h.precip.toFixed(1)} mm</span>
     </div>`;
@@ -230,7 +241,7 @@ function lakeCard(lake, evalResult, rank, speciesId) {
           <strong>Best window:</strong> ${windowTxt}
           ${speciesId === "any" ? `&nbsp;·&nbsp; <strong>Target:</strong> ${species.name}` : ""}
         </p>
-        ${refHour ? weatherSummary(refHour) : ""}
+        ${refHour ? weatherSummary(refHour, lake) : ""}
         ${
           spot
             ? `<p class="spot">📍 <strong>Where on the lake:</strong> ${spot.summary}</p>
@@ -392,6 +403,15 @@ async function init() {
     statusEl.textContent = "Forecast ready. Pick a fish and a day, then plan your trip.";
     planBtn.disabled = false;
     render();
+
+    // Seasonal normals are best-effort: load them in the background and
+    // re-render when ready, so the headline forecast never waits on them.
+    fetchNormals()
+      .then((n) => {
+        normals = n;
+        render();
+      })
+      .catch(() => {});
   } catch (err) {
     statusEl.textContent = `Could not load forecast: ${err.message}. Check your connection and reload.`;
   }

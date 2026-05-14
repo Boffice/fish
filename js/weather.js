@@ -4,6 +4,7 @@
 import { LAKES } from "./data.js";
 
 const ENDPOINT = "https://api.open-meteo.com/v1/forecast";
+const ARCHIVE = "https://archive-api.open-meteo.com/v1/archive";
 const TZ = "Asia/Tbilisi";
 
 function buildUrl() {
@@ -91,4 +92,60 @@ export async function fetchForecast() {
   });
 
   return { lakesById, days };
+}
+
+function isoDate(d) {
+  return d.toISOString().slice(0, 10);
+}
+
+function archiveUrl() {
+  const lat = LAKES.map((l) => l.lat).join(",");
+  const lon = LAKES.map((l) => l.lon).join(",");
+  // Five recent, complete years of history (archive data lags ~5 days, so we
+  // stop a year back to stay well clear of the gap).
+  const end = new Date();
+  end.setFullYear(end.getFullYear() - 1);
+  const start = new Date(end);
+  start.setFullYear(start.getFullYear() - 5);
+  const params = new URLSearchParams({
+    latitude: lat,
+    longitude: lon,
+    start_date: isoDate(start),
+    end_date: isoDate(end),
+    daily: ["temperature_2m_mean", "wind_speed_10m_mean"].join(","),
+    timezone: TZ,
+    wind_speed_unit: "kmh",
+  });
+  return `${ARCHIVE}?${params.toString()}`;
+}
+
+// Per-lake monthly climate normals (Jan..Dec) from recent years of history,
+// used to show how today's forecast compares to "normal for this time of year".
+// Returns { lakeId: { temp: [12], wind: [12] } }.
+export async function fetchNormals() {
+  const res = await fetch(archiveUrl());
+  if (!res.ok) throw new Error(`Open-Meteo archive request failed (${res.status})`);
+  let data = await res.json();
+  if (!Array.isArray(data)) data = [data];
+
+  const byLake = {};
+  data.forEach((block, idx) => {
+    const lake = LAKES[idx];
+    if (!lake || !block.daily) return;
+    const d = block.daily;
+    const acc = Array.from({ length: 12 }, () => ({ t: 0, w: 0, n: 0 }));
+    d.time.forEach((iso, i) => {
+      const m = Number(iso.slice(5, 7)) - 1;
+      const t = d.temperature_2m_mean[i];
+      if (t == null) return;
+      acc[m].t += t;
+      acc[m].w += d.wind_speed_10m_mean[i] ?? 0;
+      acc[m].n += 1;
+    });
+    byLake[lake.id] = {
+      temp: acc.map((a) => (a.n ? a.t / a.n : null)),
+      wind: acc.map((a) => (a.n ? a.w / a.n : null)),
+    };
+  });
+  return byLake;
 }
