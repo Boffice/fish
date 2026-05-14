@@ -35,7 +35,7 @@ jobs:
         with:
           # Let the workflow enable Pages itself (build_type: workflow) so no
           # manual Settings step is needed. Uses the job's pages:write token.
-          enablement: true
+          # enablement: true
 
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3

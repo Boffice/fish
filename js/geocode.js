@@ -4,7 +4,7 @@
 // uncached lakes are looked up sequentially in the background.
 
 const NOMINATIM = "https://nominatim.openstreetmap.org/search";
-const GEO_KEY = "fish.geo.v3";
+const GEO_KEY = "fish.geo.v4";
 
 export function loadGeoCache() {
   try {
@@ -20,22 +20,37 @@ function saveGeoCache(cache) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function hasPolygon(r) {
+  return r.geojson && (r.geojson.type === "Polygon" || r.geojson.type === "MultiPolygon");
+}
+
+// A result is a water body (not a same-named village/place) if OSM classes it
+// as water, or it carries a polygon outline.
+function isWaterBody(r) {
+  return (
+    r.category === "natural" ||
+    r.category === "water" ||
+    r.type === "water" ||
+    r.type === "reservoir" ||
+    hasPolygon(r)
+  );
+}
+
 async function geocodeOne(lake) {
   // polygon_geojson returns the full lake outline (simplified a little by
   // polygon_threshold); extratags carries any OSM depth tag if one exists.
+  // limit=5 + isWaterBody picks the lake even when a village shares its name.
   const url =
     `${NOMINATIM}?q=${encodeURIComponent(lake.search)}` +
-    `&countrycodes=ge&format=jsonv2&limit=1` +
+    `&countrycodes=ge&format=jsonv2&limit=5` +
     `&polygon_geojson=1&polygon_threshold=0.0008&extratags=1`;
   const res = await fetch(url, { headers: { "Accept-Language": "en" } });
   if (!res.ok) throw new Error(`Nominatim ${res.status}`);
   const data = await res.json();
   if (!data.length) return null;
-  const r = data[0];
+  const r = data.find(isWaterBody) || data[0];
   const out = { lat: Number(r.lat), lon: Number(r.lon) };
-  if (r.geojson && (r.geojson.type === "Polygon" || r.geojson.type === "MultiPolygon")) {
-    out.shape = r.geojson;
-  }
+  if (hasPolygon(r)) out.shape = r.geojson;
   const tags = r.extratags || {};
   const depth = tags.max_depth || tags.depth;
   if (depth) out.depth = String(depth);

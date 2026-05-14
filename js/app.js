@@ -545,9 +545,11 @@ async function init() {
       .catch(() => {});
 
     // Geocode real lake locations from OpenStreetMap (cached per device).
-    // Coordinates update live; re-render once done so the maps land right.
+    // Refresh as each lake resolves so facts/shapes appear live — but not
+    // while a map is open, to avoid tearing it down mid-geocode.
     geocodeLakes(LAKES, (cache) => {
       geoCoords = cache;
+      if (Object.keys(mapInstances).length === 0) render();
     })
       .then((cache) => {
         geoCoords = cache;
