@@ -3,7 +3,7 @@
 
 import { LAKES, SPECIES } from "./data.js";
 import { fetchForecast } from "./weather.js";
-import { bestWindow, ratingLabel, moonPhase, moonLabel } from "./scoring.js";
+import { bestWindow, ratingLabel, moonPhase, moonLabel, spotAdvice } from "./scoring.js";
 
 const el = (id) => document.getElementById(id);
 const speciesSel = el("species");
@@ -130,6 +130,7 @@ function lakeCard(lake, evalResult, rank, speciesId) {
     : "—";
   const refHour = windowStart ?? scored[Math.floor(scored.length / 2)]?.h;
   const isFav = favorites.has(lake.id);
+  const spot = refHour ? spotAdvice(refHour) : null;
 
   return `
     <article class="card" data-lake="${lake.id}">
@@ -155,6 +156,12 @@ function lakeCard(lake, evalResult, rank, speciesId) {
           ${speciesId === "any" ? `&nbsp;·&nbsp; <strong>Target:</strong> ${species.name}` : ""}
         </p>
         ${refHour ? weatherSummary(refHour) : ""}
+        ${
+          spot
+            ? `<p class="spot">📍 <strong>Where on the lake:</strong> ${spot.summary}</p>
+               <p class="spot-why">${spot.why}</p>`
+            : ""
+        }
         <p class="species-note">${species.note}</p>
         <button class="toggle" data-lake="${lake.id}">Show hour-by-hour ▾</button>
         <div class="detail" id="detail-${lake.id}" hidden>
