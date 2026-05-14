@@ -227,6 +227,13 @@ select {
 .toggle:hover { background: var(--bg-2); }
 
 .detail { margin-top: 0.9rem; }
+.lake-map {
+  height: 220px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  margin-bottom: 0.7rem;
+}
+.leaflet-popup-content { color: #1b3a52; }
 .bars {
   display: flex;
   align-items: flex-end;

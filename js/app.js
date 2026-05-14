@@ -122,6 +122,50 @@ function weekOutlook(speciesId, lakeId) {
   });
 }
 
+// Move a coordinate `distKm` along a compass `bearingDeg` (small-distance
+// flat-earth approximation — fine at lake scale).
+function offsetCoord(lat, lon, bearingDeg, distKm) {
+  const br = (bearingDeg * Math.PI) / 180;
+  const dLat = (distKm / 111) * Math.cos(br);
+  const dLon = (distKm / (111 * Math.cos((lat * Math.PI) / 180))) * Math.sin(br);
+  return [lat + dLat, lon + dLon];
+}
+
+// Leaflet maps are created lazily (once a card's detail panel is opened) and
+// cached, so we never spin up more maps than the user actually looks at.
+const mapInstances = {};
+function initLakeMap(lake, refHour) {
+  const id = `map-${lake.id}`;
+  if (mapInstances[id] || typeof L === "undefined") return;
+  const container = document.getElementById(id);
+  if (!container) return;
+
+  const map = L.map(container, { scrollWheelZoom: false }).setView([lake.lat, lake.lon], 12);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 17,
+    attribution: "&copy; OpenStreetMap contributors",
+  }).addTo(map);
+  L.marker([lake.lat, lake.lon]).addTo(map).bindPopup(`<b>${lake.name}</b>`);
+
+  // Draw the recommended shore: a line from the lake toward the windward bank.
+  if (refHour && refHour.wind >= 3) {
+    const toward = (refHour.windDir + 180) % 360;
+    const spot = offsetCoord(lake.lat, lake.lon, toward, 2.2);
+    L.polyline([[lake.lat, lake.lon], spot], { color: "#2ec4b6", weight: 3 }).addTo(map);
+    L.circleMarker(spot, {
+      radius: 8,
+      color: "#2ec4b6",
+      fillColor: "#2ec4b6",
+      fillOpacity: 0.75,
+    })
+      .addTo(map)
+      .bindPopup("Recommended shore — wind pushes baitfish here");
+  }
+
+  mapInstances[id] = map;
+  setTimeout(() => map.invalidateSize(), 60); // container was hidden until now
+}
+
 function weatherSummary(h) {
   const t = trendArrow(h.pressureTrend);
   return `
@@ -194,8 +238,9 @@ function lakeCard(lake, evalResult, rank, speciesId) {
             : ""
         }
         <p class="species-note">${species.note}</p>
-        <button class="toggle" data-lake="${lake.id}">Show hour-by-hour ▾</button>
+        <button class="toggle" data-lake="${lake.id}">Show map &amp; hours ▾</button>
         <div class="detail" id="detail-${lake.id}" hidden>
+          <div class="lake-map" id="map-${lake.id}"></div>
           ${hourlyBars(scored, windowStart, windowEnd)}
         </div>
       </div>
@@ -257,9 +302,17 @@ function render() {
   }
 
   let display;
-  if (lakeId === "all") display = ranked;
-  else if (lakeId === "favorites") display = ranked.filter((x) => favorites.has(x.lake.id));
-  else display = ranked.filter((x) => x.lake.id === lakeId);
+  if (lakeId === "all") {
+    // Keep score order, but float favorited lakes to the top of the list.
+    display = [...ranked].sort(
+      (a, b) =>
+        (favorites.has(b.lake.id) ? 1 : 0) - (favorites.has(a.lake.id) ? 1 : 0),
+    );
+  } else if (lakeId === "favorites") {
+    display = ranked.filter((x) => favorites.has(x.lake.id));
+  } else {
+    display = ranked.filter((x) => x.lake.id === lakeId);
+  }
 
   const targetTxt =
     speciesId === "any"
@@ -290,9 +343,18 @@ function render() {
 
   resultsEl.querySelectorAll(".toggle").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const d = el(`detail-${btn.dataset.lake}`);
+      const id = btn.dataset.lake;
+      const d = el(`detail-${id}`);
       d.hidden = !d.hidden;
-      btn.textContent = d.hidden ? "Show hour-by-hour ▾" : "Hide hour-by-hour ▴";
+      btn.textContent = d.hidden ? "Show map & hours ▾" : "Hide map & hours ▴";
+      if (!d.hidden) {
+        const x = display.find((y) => y.lake.id === id);
+        if (x) {
+          const r = x.ev.result;
+          const refHour = r.windowStart ?? r.scored[Math.floor(r.scored.length / 2)]?.h;
+          initLakeMap(x.lake, refHour);
+        }
+      }
     });
   });
 
@@ -306,13 +368,17 @@ function render() {
     });
   });
 
-  // When the view is narrowed to one lake, open its hourly breakdown.
+  // When the view is narrowed to one lake, open its detail panel (map + hours).
   if (display.length === 1) {
-    const d = el(`detail-${display[0].lake.id}`);
+    const x = display[0];
+    const d = el(`detail-${x.lake.id}`);
     const btn = resultsEl.querySelector(".toggle");
     if (d && btn) {
       d.hidden = false;
-      btn.textContent = "Hide hour-by-hour ▴";
+      btn.textContent = "Hide map & hours ▴";
+      const r = x.ev.result;
+      const refHour = r.windowStart ?? r.scored[Math.floor(r.scored.length / 2)]?.h;
+      initLakeMap(x.lake, refHour);
     }
   }
 }
