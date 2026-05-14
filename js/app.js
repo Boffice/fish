@@ -36,6 +36,38 @@ function saveFavorites() {
 
 let favorites = loadFavorites();
 
+// User-corrected lake coordinates — the built-in centroids aren't all exact,
+// so the map pins are draggable and corrections are stored per device here.
+const COORD_KEY = "fish.coords";
+
+function loadCoordOverrides() {
+  try {
+    return JSON.parse(localStorage.getItem(COORD_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+let coordOverrides = loadCoordOverrides();
+
+function lakeCoord(lake) {
+  const o = coordOverrides[lake.id];
+  return o ? { lat: o.lat, lon: o.lon } : { lat: lake.lat, lon: lake.lon };
+}
+
+function saveCoordOverride(lakeId, lat, lon) {
+  coordOverrides[lakeId] = { lat, lon };
+  localStorage.setItem(COORD_KEY, JSON.stringify(coordOverrides));
+}
+
+// LAKES with any saved coordinate corrections applied.
+function effectiveLakes() {
+  return LAKES.map((l) => {
+    const o = coordOverrides[l.id];
+    return o ? { ...l, lat: o.lat, lon: o.lon } : l;
+  });
+}
+
 function fmtHour(ts) {
   return new Date(ts).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 }
@@ -141,18 +173,31 @@ function initLakeMap(lake, refHour) {
   const container = document.getElementById(id);
   if (!container) return;
 
-  const map = L.map(container, { scrollWheelZoom: false }).setView([lake.lat, lake.lon], 12);
+  const { lat, lon } = lakeCoord(lake);
+  const map = L.map(container, { scrollWheelZoom: false }).setView([lat, lon], 12);
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 17,
     attribution: "&copy; OpenStreetMap contributors",
   }).addTo(map);
-  L.marker([lake.lat, lake.lon]).addTo(map).bindPopup(`<b>${lake.name}</b>`);
+
+  // The pin is draggable: the built-in coordinates aren't all exact, so the
+  // user can drop it on the real water and the fix is saved for next time.
+  const marker = L.marker([lat, lon], { draggable: true })
+    .addTo(map)
+    .bindPopup(`<b>${lake.name}</b><br><small>Drag this pin onto the lake to correct its location.</small>`);
+  marker.on("dragend", () => {
+    const p = marker.getLatLng();
+    saveCoordOverride(lake.id, p.lat, p.lng);
+    map.remove();
+    delete mapInstances[id];
+    initLakeMap(lake, refHour); // redraw cleanly at the corrected spot
+  });
 
   // Draw the recommended shore: a line from the lake toward the windward bank.
   if (refHour && refHour.wind >= 3) {
     const toward = (refHour.windDir + 180) % 360;
-    const spot = offsetCoord(lake.lat, lake.lon, toward, 2.2);
-    L.polyline([[lake.lat, lake.lon], spot], { color: "#2ec4b6", weight: 3 }).addTo(map);
+    const spot = offsetCoord(lat, lon, toward, 2.2);
+    L.polyline([[lat, lon], spot], { color: "#2ec4b6", weight: 3 }).addTo(map);
     L.circleMarker(spot, {
       radius: 8,
       color: "#2ec4b6",
@@ -175,17 +220,13 @@ function weatherSummary(h, lake) {
     n?.temp?.[month] != null
       ? ` <span class="norm">(norm ${Math.round(n.temp[month])}°)</span>`
       : "";
-  const windNorm =
-    n?.wind?.[month] != null
-      ? ` <span class="norm">(norm ${Math.round(n.wind[month])})</span>`
-      : "";
   return `
     <div class="wx">
       <span title="Air temperature vs seasonal normal">🌡️ ${Math.round(h.temp)}°C${tempNorm}</span>
       <span title="Sea-level pressure & 3h trend" class="${t.cls}">
         🌀 ${Math.round(h.pressure)} hPa ${t.arrow}
       </span>
-      <span title="Wind vs seasonal normal">💨 ${Math.round(h.wind)} km/h ${compass(h.windDir)}${windNorm}</span>
+      <span title="Wind">💨 ${Math.round(h.wind)} km/h ${compass(h.windDir)}</span>
       <span title="Cloud cover">☁️ ${Math.round(h.cloud)}%</span>
       <span title="Precipitation">🌧️ ${h.precip.toFixed(1)} mm</span>
     </div>`;
@@ -398,7 +439,8 @@ async function init() {
   populateControls();
   statusEl.textContent = "Loading forecast from Open-Meteo…";
   try {
-    forecast = await fetchForecast();
+    const lakes = effectiveLakes();
+    forecast = await fetchForecast(lakes);
     populateDates();
     statusEl.textContent = "Forecast ready. Pick a fish and a day, then plan your trip.";
     planBtn.disabled = false;
@@ -406,7 +448,7 @@ async function init() {
 
     // Seasonal normals are best-effort: load them in the background and
     // re-render when ready, so the headline forecast never waits on them.
-    fetchNormals()
+    fetchNormals(lakes)
       .then((n) => {
         normals = n;
         render();
