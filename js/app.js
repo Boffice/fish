@@ -402,7 +402,7 @@ function renderWeek(speciesId, lakeId, dayKey) {
                 data-day="${o.day}" title="${o.topLake ? "Top: " + o.topLake.name : ""}">
           <span class="day-name">${fmtDayShort(o.day)}</span>
           <span class="day-score">${o.score}</span>
-          <span class="day-tag">${isBest ? "best" : r.label}</span>
+          <span class="day-tag">${isBest ? "★ " + r.label : r.label}</span>
         </button>`;
       })
       .join("") +

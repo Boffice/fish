@@ -127,11 +127,17 @@ export function scoreHour(h, species) {
   }
   const blended = total / wsum;
 
+  // The weighted sub-scores realistically sit in a narrow ~0.4-0.9 band, so
+  // raw blended values barely differ between days. Stretch that band across
+  // the full range so the final score actually discriminates good from bad
+  // instead of saturating everything near "prime".
+  const contrasted = Math.max(0, Math.min(1, (blended - 0.4) / 0.5));
+
   const month = new Date(h.ts).getMonth();
   const seasonMul = species.season[month];
   const moonMul = moonFactor(moonPhase(new Date(h.ts)));
 
-  const score = Math.round(Math.max(0, Math.min(1, blended * seasonMul * moonMul)) * 100);
+  const score = Math.round(Math.max(0, Math.min(1, contrasted * seasonMul * moonMul)) * 100);
   return { score, parts, seasonMul, moonMul };
 }
 
