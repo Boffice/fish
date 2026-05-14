@@ -46,6 +46,11 @@ function lakeCoord(lake) {
   return c ? { lat: c.lat, lon: c.lon } : { lat: lake.lat, lon: lake.lon };
 }
 
+// The lake's outline polygon (GeoJSON geometry) if geocoding found one.
+function lakeShape(lake) {
+  return geoCoords[lake.id]?.shape || null;
+}
+
 // LAKES with geocoded coordinates applied where available.
 function effectiveLakes() {
   return LAKES.map((l) => {
@@ -150,6 +155,44 @@ function offsetCoord(lat, lon, bearingDeg, distKm) {
   return [lat + dLat, lon + dLon];
 }
 
+// GeoJSON polygon rings (arrays of [lon, lat]); flattens MultiPolygon.
+function shapeRings(geojson) {
+  if (!geojson) return [];
+  if (geojson.type === "Polygon") return geojson.coordinates;
+  if (geojson.type === "MultiPolygon") return geojson.coordinates.flat();
+  return [];
+}
+
+// Ray-casting point-in-polygon test against any ring of the lake.
+function pointInRings(lon, lat, rings) {
+  let inside = false;
+  for (const ring of rings) {
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i];
+      const [xj, yj] = ring[j];
+      const crosses =
+        yi > lat !== yj > lat &&
+        lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi;
+      if (crosses) inside = !inside;
+    }
+  }
+  return inside;
+}
+
+// Walk outward from the lake centre along `bearingDeg` and return the last
+// point still inside the lake — i.e. the shoreline in that direction.
+function shorePoint(geojson, lat, lon, bearingDeg) {
+  const rings = shapeRings(geojson);
+  if (!rings.length) return null;
+  let lastInside = null;
+  for (let dist = 0; dist <= 14; dist += 0.05) {
+    const [plat, plon] = offsetCoord(lat, lon, bearingDeg, dist);
+    if (pointInRings(plon, plat, rings)) lastInside = [plat, plon];
+    else if (lastInside) break;
+  }
+  return lastInside;
+}
+
 // Leaflet maps are created lazily (once a card's detail panel is opened) and
 // tracked so they can be torn down whenever the card list is re-rendered.
 let mapInstances = {};
@@ -160,18 +203,30 @@ function initLakeMap(lake, refHour) {
   if (!container) return;
 
   const { lat, lon } = lakeCoord(lake);
+  const shape = lakeShape(lake);
   const map = L.map(container, { scrollWheelZoom: false }).setView([lat, lon], 12);
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 17,
     attribution: "&copy; OpenStreetMap contributors",
   }).addTo(map);
+
+  // Draw the whole lake outline and frame the map to it.
+  if (shape) {
+    const layer = L.geoJSON(shape, {
+      style: { color: "#4cc9f0", weight: 2, fillColor: "#4cc9f0", fillOpacity: 0.18 },
+    }).addTo(map);
+    map.fitBounds(layer.getBounds(), { padding: [18, 18] });
+  }
   L.marker([lat, lon]).addTo(map).bindPopup(`<b>${lake.name}</b>`);
 
   // The green marker is the app's suggestion: the windward shore, where wind
-  // and surface drift stack baitfish and the predators that follow them.
+  // and surface drift stack baitfish and the predators that follow them. With
+  // a real outline it sits on the actual shoreline; otherwise it's an offset.
   if (refHour && refHour.wind >= 3) {
     const toward = (refHour.windDir + 180) % 360;
-    const spot = offsetCoord(lat, lon, toward, 2.2);
+    const spot =
+      (shape && shorePoint(shape, lat, lon, toward)) ||
+      offsetCoord(lat, lon, toward, 2.2);
     L.polyline([[lat, lon], spot], { color: "#2ec4b6", weight: 3 }).addTo(map);
     L.circleMarker(spot, {
       radius: 9,

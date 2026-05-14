@@ -4,7 +4,7 @@
 // uncached lakes are looked up sequentially in the background.
 
 const NOMINATIM = "https://nominatim.openstreetmap.org/search";
-const GEO_KEY = "fish.geo.v1";
+const GEO_KEY = "fish.geo.v2";
 
 export function loadGeoCache() {
   try {
@@ -21,14 +21,22 @@ function saveGeoCache(cache) {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function geocodeOne(lake) {
+  // polygon_geojson returns the full lake outline (simplified a little by
+  // polygon_threshold) so the app can reason about the whole water body.
   const url =
     `${NOMINATIM}?q=${encodeURIComponent(lake.search)}` +
-    `&countrycodes=ge&format=jsonv2&limit=1`;
+    `&countrycodes=ge&format=jsonv2&limit=1` +
+    `&polygon_geojson=1&polygon_threshold=0.0008`;
   const res = await fetch(url, { headers: { "Accept-Language": "en" } });
   if (!res.ok) throw new Error(`Nominatim ${res.status}`);
   const data = await res.json();
   if (!data.length) return null;
-  return { lat: Number(data[0].lat), lon: Number(data[0].lon) };
+  const r = data[0];
+  const out = { lat: Number(r.lat), lon: Number(r.lon) };
+  if (r.geojson && (r.geojson.type === "Polygon" || r.geojson.type === "MultiPolygon")) {
+    out.shape = r.geojson;
+  }
+  return out;
 }
 
 // Geocode any lakes not already cached. `onProgress(cache)` fires after each
