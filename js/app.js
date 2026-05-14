@@ -193,6 +193,58 @@ function shorePoint(geojson, lat, lon, bearingDeg) {
   return lastInside;
 }
 
+// Shoelace area of one ring (m²), via a local equirectangular projection.
+function ringAreaM2(ring) {
+  if (ring.length < 4) return 0;
+  const lat0 = (ring[0][1] * Math.PI) / 180;
+  const mPerDegLat = 111320;
+  const mPerDegLon = 111320 * Math.cos(lat0);
+  let sum = 0;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0] * mPerDegLon;
+    const yi = ring[i][1] * mPerDegLat;
+    const xj = ring[j][0] * mPerDegLon;
+    const yj = ring[j][1] * mPerDegLat;
+    sum += xj * yi - xi * yj;
+  }
+  return Math.abs(sum) / 2;
+}
+
+// Lake surface area in km² from its polygon (subtracts holes, sums parts).
+function polygonAreaKm2(geojson) {
+  const polys =
+    geojson?.type === "Polygon"
+      ? [geojson.coordinates]
+      : geojson?.type === "MultiPolygon"
+        ? geojson.coordinates
+        : [];
+  let total = 0;
+  for (const poly of polys) {
+    poly.forEach((ring, idx) => {
+      total += idx === 0 ? ringAreaM2(ring) : -ringAreaM2(ring);
+    });
+  }
+  return total / 1e6;
+}
+
+// A short "facts" line for a lake: surface area, elevation, and depth where
+// OpenStreetMap actually provides it.
+function lakeFacts(lake) {
+  const shape = lakeShape(lake);
+  const parts = [];
+  if (shape) {
+    const km2 = polygonAreaKm2(shape);
+    parts.push(`📐 ${km2 < 1 ? km2.toFixed(2) : km2.toFixed(1)} km²`);
+  }
+  parts.push(`⛰️ ${lake.elevation} m`);
+  const depth = geoCoords[lake.id]?.depth;
+  if (depth) {
+    const d = depth.trim();
+    parts.push(`🌊 ${/^[\d.]+$/.test(d) ? d + " m" : d}`);
+  }
+  return parts.join(" · ");
+}
+
 // Leaflet maps are created lazily (once a card's detail panel is opened) and
 // tracked so they can be torn down whenever the card list is re-rendered.
 let mapInstances = {};
@@ -217,7 +269,9 @@ function initLakeMap(lake, refHour) {
     }).addTo(map);
     map.fitBounds(layer.getBounds(), { padding: [18, 18] });
   }
-  L.marker([lat, lon]).addTo(map).bindPopup(`<b>${lake.name}</b>`);
+  L.marker([lat, lon])
+    .addTo(map)
+    .bindPopup(`<b>${lake.name}</b><br><small>${lakeFacts(lake)}</small>`);
 
   // The green marker is the app's suggestion: the windward shore, where wind
   // and surface drift stack baitfish and the predators that follow them. With
@@ -295,7 +349,7 @@ function lakeCard(lake, evalResult, rank, speciesId) {
         <span class="rank">#${rank}</span>
         <div class="card-title">
           <h3>${lake.name}</h3>
-          <p class="region">${lake.region} · ${lake.elevation} m</p>
+          <p class="region">${lake.region}</p>
         </div>
         <div class="score ${rating.cls}">
           <span class="score-num">${dayScore}</span>
@@ -313,6 +367,7 @@ function lakeCard(lake, evalResult, rank, speciesId) {
           ${speciesId === "any" ? `&nbsp;·&nbsp; <strong>Target:</strong> ${species.name}` : ""}
         </p>
         ${refHour ? weatherSummary(refHour, lake) : ""}
+        <p class="lake-facts">${lakeFacts(lake)}</p>
         ${
           spot
             ? `<p class="spot">📍 <strong>Where on the lake:</strong> ${spot.summary}</p>

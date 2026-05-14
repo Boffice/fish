@@ -200,6 +200,12 @@ select {
 .t-steady { color: var(--good); }
 .norm { color: var(--muted); font-size: 0.82em; }
 
+.lake-facts {
+  color: var(--muted);
+  font-size: 0.83rem;
+  margin: 0.5rem 0 0.1rem;
+}
+
 .spot { font-size: 0.92rem; margin: 0.6rem 0 0.15rem; }
 .spot strong { color: var(--accent); }
 .spot-why {
