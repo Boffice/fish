@@ -121,6 +121,20 @@ select {
 .score.fair  { background: rgba(255, 202, 58, 0.16); color: var(--fair); }
 .score.slow  { background: rgba(255, 123, 107, 0.16); color: var(--slow); }
 
+.fav-btn {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 1.25rem;
+  line-height: 1;
+  border-radius: 9px;
+  padding: 0.3rem 0.5rem;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, transform 0.08s ease;
+}
+.fav-btn:hover { color: var(--fair); transform: scale(1.08); }
+.fav-btn.on { color: var(--fair); border-color: var(--fair); }
+
 .card-body { padding: 0.9rem 1.1rem 1.1rem; }
 .recommend { font-size: 0.95rem; margin-bottom: 0.6rem; }
 .recommend strong { color: var(--accent); }

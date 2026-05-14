@@ -7,6 +7,7 @@ import { bestWindow, ratingLabel, moonPhase, moonLabel } from "./scoring.js";
 
 const el = (id) => document.getElementById(id);
 const speciesSel = el("species");
+const lakeSel = el("lake");
 const dateSel = el("date");
 const planBtn = el("planBtn");
 const statusEl = el("status");
@@ -14,6 +15,24 @@ const resultsEl = el("results");
 const moonEl = el("moon");
 
 let forecast = null; // cached { lakesById, days }
+
+// Favorite lakes are kept in the browser only (localStorage) — per device,
+// no account needed.
+const FAV_KEY = "fish.favorites";
+
+function loadFavorites() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(FAV_KEY)) || []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveFavorites() {
+  localStorage.setItem(FAV_KEY, JSON.stringify([...favorites]));
+}
+
+let favorites = loadFavorites();
 
 function fmtHour(ts) {
   return new Date(ts).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
@@ -39,6 +58,11 @@ function populateControls() {
   speciesSel.innerHTML =
     `<option value="any">Any fish (pick the best for me)</option>` +
     SPECIES.map((s) => `<option value="${s.id}">${s.name} — ${s.geo}</option>`).join("");
+
+  lakeSel.innerHTML =
+    `<option value="all">All lakes (ranked)</option>` +
+    `<option value="favorites">★ My favorite lakes</option>` +
+    LAKES.map((l) => `<option value="${l.id}">${l.name} — ${l.region}</option>`).join("");
 }
 
 function populateDates() {
@@ -105,6 +129,7 @@ function lakeCard(lake, evalResult, rank, speciesId) {
     ? `${fmtHour(windowStart.ts)}–${fmtHour(windowEnd.ts)}`
     : "—";
   const refHour = windowStart ?? scored[Math.floor(scored.length / 2)]?.h;
+  const isFav = favorites.has(lake.id);
 
   return `
     <article class="card" data-lake="${lake.id}">
@@ -118,6 +143,11 @@ function lakeCard(lake, evalResult, rank, speciesId) {
           <span class="score-num">${dayScore}</span>
           <span class="score-label">${rating.label}</span>
         </div>
+        <button class="fav-btn ${isFav ? "on" : ""}" data-fav="${lake.id}"
+                aria-label="${isFav ? "Remove from favorites" : "Add to favorites"}"
+                title="${isFav ? "Remove from favorites" : "Add to favorites"}">
+          ${isFav ? "★" : "☆"}
+        </button>
       </header>
       <div class="card-body">
         <p class="recommend">
@@ -136,28 +166,54 @@ function lakeCard(lake, evalResult, rank, speciesId) {
 
 function render() {
   const speciesId = speciesSel.value;
+  const lakeId = lakeSel.value;
   const dayKey = dateSel.value;
 
   const moonP = moonPhase(new Date(dayKey + "T21:00:00"));
   moonEl.textContent = `Moon: ${moonLabel(moonP)}`;
 
+  // Rank every lake first, so a single-lake view can still show its standing.
   const ranked = LAKES.map((lake) => ({ lake, ev: evaluate(lake.id, dayKey, speciesId) }))
     .filter((x) => x.ev)
     .sort((a, b) => b.ev.result.dayScore - a.ev.result.dayScore);
+  ranked.forEach((x, i) => (x.rank = i + 1));
 
   if (ranked.length === 0) {
     resultsEl.innerHTML = `<p class="empty">No forecast data for that day.</p>`;
+    statusEl.textContent = "No forecast data for that day.";
     return;
   }
+
+  let display;
+  if (lakeId === "all") display = ranked;
+  else if (lakeId === "favorites") display = ranked.filter((x) => favorites.has(x.lake.id));
+  else display = ranked.filter((x) => x.lake.id === lakeId);
 
   const targetTxt =
     speciesId === "any"
       ? "the best available fish"
       : SPECIES.find((s) => s.id === speciesId).name;
-  statusEl.textContent = `${fmtDay(dayKey)} — ${ranked.length} lakes ranked for ${targetTxt}.`;
 
-  resultsEl.innerHTML = ranked
-    .map((x, i) => lakeCard(x.lake, x.ev, i + 1, speciesId))
+  if (lakeId === "favorites" && display.length === 0) {
+    resultsEl.innerHTML =
+      `<p class="empty">No favorite lakes yet. Tap the ☆ on any lake to add it here.</p>`;
+    statusEl.textContent = `${fmtDay(dayKey)} — no favorite lakes saved yet.`;
+    return;
+  }
+
+  if (lakeId === "all") {
+    statusEl.textContent = `${fmtDay(dayKey)} — ${ranked.length} lakes ranked for ${targetTxt}.`;
+  } else if (lakeId === "favorites") {
+    statusEl.textContent =
+      `${fmtDay(dayKey)} — ${display.length} favorite lake${display.length === 1 ? "" : "s"} ranked for ${targetTxt}.`;
+  } else {
+    const x = display[0];
+    statusEl.textContent =
+      `${fmtDay(dayKey)} — ${x.lake.name} ranks #${x.rank} of ${ranked.length} for ${targetTxt}.`;
+  }
+
+  resultsEl.innerHTML = display
+    .map((x) => lakeCard(x.lake, x.ev, x.rank, speciesId))
     .join("");
 
   resultsEl.querySelectorAll(".toggle").forEach((btn) => {
@@ -167,6 +223,26 @@ function render() {
       btn.textContent = d.hidden ? "Show hour-by-hour ▾" : "Hide hour-by-hour ▴";
     });
   });
+
+  resultsEl.querySelectorAll(".fav-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.fav;
+      if (favorites.has(id)) favorites.delete(id);
+      else favorites.add(id);
+      saveFavorites();
+      render();
+    });
+  });
+
+  // When the view is narrowed to one lake, open its hourly breakdown.
+  if (display.length === 1) {
+    const d = el(`detail-${display[0].lake.id}`);
+    const btn = resultsEl.querySelector(".toggle");
+    if (d && btn) {
+      d.hidden = false;
+      btn.textContent = "Hide hour-by-hour ▴";
+    }
+  }
 }
 
 async function init() {
@@ -185,6 +261,7 @@ async function init() {
 
 planBtn.addEventListener("click", render);
 speciesSel.addEventListener("change", render);
+lakeSel.addEventListener("change", render);
 dateSel.addEventListener("change", render);
 
 init();
