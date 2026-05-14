@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Georgia Lake Fishing Planner</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <header class="site-head">
+    <h1>🎣 Georgia Lake Fishing Planner</h1>
+    <p class="tagline">
+      Weather-driven bite forecasts for the lakes of Georgia — pressure, wind,
+      light and season scored into one number, so you know where and when to go.
+    </p>
+  </header>
+
+  <main>
+    <section class="controls">
+      <div class="field">
+        <label for="species">Target fish</label>
+        <select id="species"></select>
+      </div>
+      <div class="field">
+        <label for="date">Day</label>
+        <select id="date"></select>
+      </div>
+      <button id="planBtn" disabled>Plan my trip</button>
+      <span id="moon" class="moon"></span>
+    </section>
+
+    <p id="status" class="status">Loading…</p>
+    <section id="results" class="results"></section>
+  </main>
+
+  <footer class="site-foot">
+    <p>
+      Bite scores blend barometric pressure &amp; 3-hour trend, wind, cloud,
+      precipitation, day-length / twilight, lunar phase and per-species seasonal
+      activity. Forecast data from
+      <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>.
+      Lakes &amp; species cover the country of Georgia. A planning aid — always
+      check local regulations and conditions before heading out.
+    </p>
+  </footer>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
