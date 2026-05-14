@@ -12,6 +12,7 @@ const dateSel = el("date");
 const planBtn = el("planBtn");
 const statusEl = el("status");
 const resultsEl = el("results");
+const weekEl = el("week");
 const moonEl = el("moon");
 
 let forecast = null; // cached { lakesById, days }
@@ -41,6 +42,11 @@ function fmtHour(ts) {
 function fmtDay(key) {
   const d = new Date(key + "T12:00:00");
   return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+}
+
+function fmtDayShort(key) {
+  const d = new Date(key + "T12:00:00");
+  return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric" });
 }
 
 function compass(deg) {
@@ -89,6 +95,31 @@ function evaluate(lakeId, dayKey, speciesId) {
   }
   const sp = SPECIES.find((s) => s.id === speciesId);
   return { species: sp, result: bestWindow(dayHours, sp) };
+}
+
+// Which lakes the current filter is looking at.
+function lakesForFilter(lakeId) {
+  if (lakeId === "favorites") return LAKES.filter((l) => favorites.has(l.id));
+  if (lakeId === "all") return LAKES;
+  return LAKES.filter((l) => l.id === lakeId);
+}
+
+// Score every forecast day so the week strip can flag the best ones. A day's
+// score is the top lake score available that day for the current filter.
+function weekOutlook(speciesId, lakeId) {
+  const lakes = lakesForFilter(lakeId);
+  return forecast.days.map((day) => {
+    let score = -1;
+    let topLake = null;
+    for (const lake of lakes) {
+      const ev = evaluate(lake.id, day, speciesId);
+      if (ev && ev.result.dayScore > score) {
+        score = ev.result.dayScore;
+        topLake = lake;
+      }
+    }
+    return { day, score: Math.max(0, score), topLake };
+  });
 }
 
 function weatherSummary(h) {
@@ -171,6 +202,38 @@ function lakeCard(lake, evalResult, rank, speciesId) {
     </article>`;
 }
 
+// The "best days this week" strip. Chips are scored, colour-coded, and the
+// top-scoring day(s) are tagged; tapping a chip jumps to that day.
+function renderWeek(speciesId, lakeId, dayKey) {
+  const outlook = weekOutlook(speciesId, lakeId);
+  const best = Math.max(...outlook.map((o) => o.score));
+
+  weekEl.innerHTML =
+    `<p class="week-title">Best days ahead</p><div class="week">` +
+    outlook
+      .map((o) => {
+        const r = ratingLabel(o.score);
+        const isSel = o.day === dayKey;
+        const isBest = o.score === best && o.score > 0;
+        return `
+        <button class="day-chip ${r.cls} ${isSel ? "sel" : ""} ${isBest ? "best" : ""}"
+                data-day="${o.day}" title="${o.topLake ? "Top: " + o.topLake.name : ""}">
+          <span class="day-name">${fmtDayShort(o.day)}</span>
+          <span class="day-score">${o.score}</span>
+          <span class="day-tag">${isBest ? "best" : r.label}</span>
+        </button>`;
+      })
+      .join("") +
+    `</div>`;
+
+  weekEl.querySelectorAll(".day-chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      dateSel.value = chip.dataset.day;
+      render();
+    });
+  });
+}
+
 function render() {
   const speciesId = speciesSel.value;
   const lakeId = lakeSel.value;
@@ -178,6 +241,8 @@ function render() {
 
   const moonP = moonPhase(new Date(dayKey + "T21:00:00"));
   moonEl.textContent = `Moon: ${moonLabel(moonP)}`;
+
+  renderWeek(speciesId, lakeId, dayKey);
 
   // Rank every lake first, so a single-lake view can still show its standing.
   const ranked = LAKES.map((lake) => ({ lake, ev: evaluate(lake.id, dayKey, speciesId) }))
