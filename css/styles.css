@@ -153,6 +153,15 @@ select {
 .t-rise { color: var(--slow); }
 .t-steady { color: var(--good); }
 
+.spot { font-size: 0.92rem; margin: 0.6rem 0 0.15rem; }
+.spot strong { color: var(--accent); }
+.spot-why {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-style: italic;
+  margin-bottom: 0.2rem;
+}
+
 .species-note {
   color: var(--muted);
   font-size: 0.86rem;

@@ -159,3 +159,53 @@ export function ratingLabel(score) {
   if (score >= 42) return { label: "Fair", cls: "fair" };
   return { label: "Slow", cls: "slow" };
 }
+
+const COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+function bearing(deg) {
+  return COMPASS[Math.round((((deg % 360) + 360) % 360) / 45) % 8];
+}
+
+// Where on the lake to position, from wind, pressure and cloud.
+//
+// Wind direction from Open-Meteo is the direction the wind blows FROM, so the
+// productive "windward" bank is the one it blows toward (deg + 180): wind and
+// surface drift stack plankton and baitfish against it, and predators follow.
+// Pressure sets the depth: a high/rising barometer pins fish deep and tight to
+// structure, a low/falling one (or heavy cloud) lifts them into the shallows.
+export function spotAdvice(h) {
+  const towardDeg = (h.windDir + 180) % 360;
+  let shore, shoreReason;
+  if (h.wind >= 8) {
+    shore = `the ${bearing(towardDeg)} shore`;
+    shoreReason = `the ${bearing(h.windDir)} wind at ${Math.round(h.wind)} km/h stacks food against it`;
+  } else if (h.wind >= 3) {
+    shore = `the ${bearing(towardDeg)} shore`;
+    shoreReason = `a light ${bearing(h.windDir)} breeze gives that bank a mild push`;
+  } else {
+    shore = "points, inflows and shaded structure";
+    shoreReason = "it is near calm, so there is no wind-driven side — fish features and cover";
+  }
+
+  let depth, depthReason;
+  const rising = h.pressureTrend > 2.5 || h.pressure >= 1023;
+  const falling = h.pressureTrend < -1.5 || h.pressure <= 1008;
+  if (rising) {
+    depth = "deeper water and drop-offs";
+    depthReason = "high / rising pressure pins fish down and tight to structure";
+  } else if (falling || h.cloud >= 70) {
+    depth = "shallow flats and bays";
+    depthReason = falling
+      ? "low / falling pressure lifts fish into the shallows to feed"
+      : "heavy cloud cover lets fish roam and feed shallow";
+  } else {
+    depth = "mid-depth weed edges and breaklines";
+    depthReason = "steady pressure keeps fish on their usual feeding edges";
+  }
+
+  return {
+    shore,
+    depth,
+    summary: `Work ${shore}, focusing on ${depth}.`,
+    why: `${shoreReason}; ${depthReason}.`,
+  };
+}
