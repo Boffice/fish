@@ -3,6 +3,7 @@
 
 import { LAKES, SPECIES } from "./data.js";
 import { fetchForecast, fetchNormals } from "./weather.js";
+import { loadGeoCache, geocodeLakes } from "./geocode.js";
 import { bestWindow, ratingLabel, moonPhase, moonLabel, spotAdvice } from "./scoring.js";
 
 const el = (id) => document.getElementById(id);
@@ -36,35 +37,20 @@ function saveFavorites() {
 
 let favorites = loadFavorites();
 
-// User-corrected lake coordinates — the built-in centroids aren't all exact,
-// so the map pins are draggable and corrections are stored per device here.
-const COORD_KEY = "fish.coords";
-
-function loadCoordOverrides() {
-  try {
-    return JSON.parse(localStorage.getItem(COORD_KEY)) || {};
-  } catch {
-    return {};
-  }
-}
-
-let coordOverrides = loadCoordOverrides();
+// Lake coordinates are geocoded from OpenStreetMap (cached per device); the
+// built-in centroids in data.js are only a fallback until geocoding lands.
+let geoCoords = loadGeoCache();
 
 function lakeCoord(lake) {
-  const o = coordOverrides[lake.id];
-  return o ? { lat: o.lat, lon: o.lon } : { lat: lake.lat, lon: lake.lon };
+  const c = geoCoords[lake.id];
+  return c ? { lat: c.lat, lon: c.lon } : { lat: lake.lat, lon: lake.lon };
 }
 
-function saveCoordOverride(lakeId, lat, lon) {
-  coordOverrides[lakeId] = { lat, lon };
-  localStorage.setItem(COORD_KEY, JSON.stringify(coordOverrides));
-}
-
-// LAKES with any saved coordinate corrections applied.
+// LAKES with geocoded coordinates applied where available.
 function effectiveLakes() {
   return LAKES.map((l) => {
-    const o = coordOverrides[l.id];
-    return o ? { ...l, lat: o.lat, lon: o.lon } : l;
+    const c = geoCoords[l.id];
+    return c ? { ...l, lat: c.lat, lon: c.lon } : l;
   });
 }
 
@@ -165,8 +151,8 @@ function offsetCoord(lat, lon, bearingDeg, distKm) {
 }
 
 // Leaflet maps are created lazily (once a card's detail panel is opened) and
-// cached, so we never spin up more maps than the user actually looks at.
-const mapInstances = {};
+// tracked so they can be torn down whenever the card list is re-rendered.
+let mapInstances = {};
 function initLakeMap(lake, refHour) {
   const id = `map-${lake.id}`;
   if (mapInstances[id] || typeof L === "undefined") return;
@@ -179,33 +165,22 @@ function initLakeMap(lake, refHour) {
     maxZoom: 17,
     attribution: "&copy; OpenStreetMap contributors",
   }).addTo(map);
+  L.marker([lat, lon]).addTo(map).bindPopup(`<b>${lake.name}</b>`);
 
-  // The pin is draggable: the built-in coordinates aren't all exact, so the
-  // user can drop it on the real water and the fix is saved for next time.
-  const marker = L.marker([lat, lon], { draggable: true })
-    .addTo(map)
-    .bindPopup(`<b>${lake.name}</b><br><small>Drag this pin onto the lake to correct its location.</small>`);
-  marker.on("dragend", () => {
-    const p = marker.getLatLng();
-    saveCoordOverride(lake.id, p.lat, p.lng);
-    map.remove();
-    delete mapInstances[id];
-    initLakeMap(lake, refHour); // redraw cleanly at the corrected spot
-  });
-
-  // Draw the recommended shore: a line from the lake toward the windward bank.
+  // The green marker is the app's suggestion: the windward shore, where wind
+  // and surface drift stack baitfish and the predators that follow them.
   if (refHour && refHour.wind >= 3) {
     const toward = (refHour.windDir + 180) % 360;
     const spot = offsetCoord(lat, lon, toward, 2.2);
     L.polyline([[lat, lon], spot], { color: "#2ec4b6", weight: 3 }).addTo(map);
     L.circleMarker(spot, {
-      radius: 8,
+      radius: 9,
       color: "#2ec4b6",
       fillColor: "#2ec4b6",
-      fillOpacity: 0.75,
+      fillOpacity: 0.8,
     })
       .addTo(map)
-      .bindPopup("Recommended shore — wind pushes baitfish here");
+      .bindPopup("<b>Suggested spot</b><br><small>Wind pushes baitfish to this shore.</small>");
   }
 
   mapInstances[id] = map;
@@ -389,6 +364,10 @@ function render() {
       `${fmtDay(dayKey)} — ${x.lake.name} ranks #${x.rank} of ${ranked.length} for ${targetTxt}.`;
   }
 
+  // Tear down any live maps before their container DOM is replaced.
+  Object.values(mapInstances).forEach((m) => m.remove());
+  mapInstances = {};
+
   resultsEl.innerHTML = display
     .map((x) => lakeCard(x.lake, x.ev, x.rank, speciesId))
     .join("");
@@ -451,6 +430,17 @@ async function init() {
     fetchNormals(lakes)
       .then((n) => {
         normals = n;
+        render();
+      })
+      .catch(() => {});
+
+    // Geocode real lake locations from OpenStreetMap (cached per device).
+    // Coordinates update live; re-render once done so the maps land right.
+    geocodeLakes(LAKES, (cache) => {
+      geoCoords = cache;
+    })
+      .then((cache) => {
+        geoCoords = cache;
         render();
       })
       .catch(() => {});
