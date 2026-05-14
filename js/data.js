@@ -16,7 +16,7 @@ export const LAKES = [
   { id: "tbilisisea", name: "Tbilisi Reservoir (Sea)", region: "Tbilisi",    lat: 41.783, lon: 44.872, elevation: 540,  search: "Tbilisi Sea" },
   { id: "lisi",       name: "Lisi Lake",       region: "Tbilisi",            lat: 41.742, lon: 44.741, elevation: 620,  search: "Lisi Lake Tbilisi" },
   { id: "kumisi",     name: "Kumisi Lake",     region: "Kvemo Kartli",       lat: 41.601, lon: 44.781, elevation: 463,  search: "Kumisi Lake" },
-  { id: "jandari",    name: "Jandari Lake",    region: "Kvemo Kartli",       lat: 41.423, lon: 45.151, elevation: 295,  search: "Jandari Lake" },
+  { id: "jandari",    name: "Jandari Lake",    region: "Kvemo Kartli",       lat: 41.423, lon: 45.151, elevation: 295,  search: "ჯანდარის ტბა" },
   { id: "sioni",      name: "Sioni Reservoir", region: "Mtskheta-Mtianeti",  lat: 42.099, lon: 44.778, elevation: 1067, search: "Sioni Reservoir Tianeti" },
   { id: "shaori",     name: "Shaori Reservoir", region: "Racha",             lat: 42.451, lon: 43.045, elevation: 1132, search: "Shaori Reservoir" },
   { id: "tkibuli",    name: "Tkibuli Reservoir", region: "Imereti",          lat: 42.347, lon: 42.985, elevation: 750,  search: "Tkibuli Reservoir" },
